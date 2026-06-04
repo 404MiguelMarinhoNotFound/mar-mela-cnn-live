@@ -1,0 +1,32 @@
+# ---- Dataset (never commit the ~15k images) ----
+image_splits_MELandBEN/
+
+# ---- Generated artifacts ----
+reports/
+checkpoints/
+*.pt
+*.ckpt
+*.pth
+mlruns/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+.pytest_cache/
+
+# ---- Local agent / tooling state ----
+.claude/
+
+# ---- Editor / OS ----
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

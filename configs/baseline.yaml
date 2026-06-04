@@ -1,0 +1,38 @@
+# Single-model EfficientNet baseline. See melanoma/config.py for all fields.
+
+# ---- Data ----
+data_root: image_splits_MELandBEN
+train_dir: Training
+val_dir: validate
+test_dir: Testing
+pos_class_dir: MEL
+neg_class_dir: Benign
+reports_dir: reports
+manifest_path: reports/manifest.csv
+
+# ---- Model ----
+backbone: tf_efficientnet_b3   # tf_efficientnet_b0 for fast CPU smoke-tests
+pretrained: true
+# img_size: null  -> inferred from backbone (b0=224, b3=300, b4=380)
+
+# ---- Training ----
+epochs: 15
+batch_size: 32                 # drop to 16 for B4 on an 8GB GPU
+lr: 2.0e-4
+weight_decay: 1.0e-4
+warmup_epochs: 1
+num_workers: 4
+loss: focal                    # focal | weighted_ce
+focal_gamma: 2.0
+# focal_alpha: null            -> derived from train class balance
+
+# ---- Eval ----
+tta: false
+beta: 2.0                      # F2 (recall weighted 2x)
+
+# ---- Bookkeeping ----
+seed: 42
+# subset: null                 -> use all data; set e.g. 100 for smoke-tests
+checkpoint_dir: checkpoints
+mlflow: false
+mlflow_experiment: melanoma-baseline
