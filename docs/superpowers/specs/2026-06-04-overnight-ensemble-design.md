@@ -18,19 +18,19 @@ free overnight GPU compute on an RTX 2070 Super (8 GB), via a diverse model ense
 
 | # | Backbone          | img | batch | seed | epochs |
 |---|-------------------|-----|-------|------|--------|
-| 1 | tf_efficientnet_b3 | 300 | 32    | 42   | 20     |
-| 2 | tf_efficientnet_b3 | 300 | 32    | 43   | 20     |
-| 3 | tf_efficientnet_b3 | 300 | 32    | 44   | 20     |
-| 4 | tf_efficientnet_b4 | 380 | 16    | 42   | 20     |
-| 5 | tf_efficientnet_b4 | 380 | 16    | 43   | 20     |
+| 1 | tf_efficientnet_b3 | 300 | 32    | 42   | 30     |
+| 2 | tf_efficientnet_b3 | 300 | 32    | 43   | 30     |
+| 3 | tf_efficientnet_b3 | 300 | 32    | 44   | 30     |
+| 4 | tf_efficientnet_b4 | 380 | 16    | 42   | 30     |
+| 5 | tf_efficientnet_b4 | 380 | 16    | 43   | 30     |
 
 Shared hyperparameters (current `baseline.yaml` defaults, unchanged):
 focal loss γ=2 (α auto from class balance), AdamW lr 2e-4, weight_decay 1e-4,
 cosine schedule + 1-epoch warmup, AMP on CUDA. Each model checkpoints its
 **best-by-val-F2** epoch; threshold tuned on val every epoch (never 0.5).
 
-Rough budget on a 2070 Super: B3 ~30 min/model, B4 ~90 min/model →
-~4.5 h training + eval. Comfortable overnight; headroom to add seeds later.
+Rough budget on a 2070 Super at 30 epochs: B3 ~45 min/model, B4 ~135 min/model →
+~6.5–7 h training + eval. Comfortable overnight; headroom to add seeds later.
 
 ## Code changes
 

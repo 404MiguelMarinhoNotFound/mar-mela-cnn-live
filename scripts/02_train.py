@@ -37,6 +37,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--batch-size", type=int, default=None)
     p.add_argument("--subset", type=int, default=None,
                    help="cap images per class (CPU smoke-tests)")
+    p.add_argument("--seed", type=int, default=None,
+                   help="override cfg.seed (for ensemble diversity)")
     p.add_argument("--num-workers", type=int, default=None)
     p.add_argument("--mlflow", action="store_true")
     return p.parse_args()
@@ -47,7 +49,7 @@ def main() -> None:
     overrides = dict(
         data_root=args.data_root, backbone=args.backbone, epochs=args.epochs,
         batch_size=args.batch_size, subset=args.subset, num_workers=args.num_workers,
-        mlflow=True if args.mlflow else None,
+        seed=args.seed, mlflow=True if args.mlflow else None,
     )
     cfg = Config.from_yaml(args.config, **overrides)
     set_seed(cfg.seed)
@@ -79,7 +81,7 @@ def main() -> None:
     logger = get_logger(cfg)
     logger.log_params({k: v for k, v in cfg.__dict__.items() if k != "extra"})
 
-    ckpt_path = Path(cfg.checkpoint_dir) / f"{cfg.backbone}_best.pt"
+    ckpt_path = Path(cfg.checkpoint_dir) / f"{cfg.backbone}_seed{cfg.seed}_best.pt"
     beta_key = f"f{int(cfg.beta)}"
     best_f2 = -1.0
 
