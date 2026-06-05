@@ -163,6 +163,89 @@ controls (Firewall, BotID), auth, calling the model, and rendering results.
 - **Artifact hosting.** Checkpoints are gitignored and not in the repo — Phase 2 needs
   them uploaded to the inference host's storage (Modal Volume / HF Hub / S3).
 
+## 8a. Free hosting — deep dive ("free + decent runtimes")
+
+The hard part: **free**, **decent latency**, and **a heavy CV ensemble** pull against
+each other. There's a trade-off triangle — you can pick two cleanly, and engineer
+around the third:
+
+```
+        FREE GPU (fast)                 ALWAYS-ON (no cold start)
+        but cold starts / quotas         but CPU-only
+        - HF ZeroGPU (~3.5 min/day)      - Oracle Always Free A1 (4 ARM, 24GB)
+        - Modal ($30/mo credits)         - (Cloud Run = scale-to-zero → cold start)
+                       \                 /
+                        \               /
+                   ON-DEVICE (free, infinite scale, no cold start)
+                   but single model, client compute
+                   - in-browser ONNX Runtime Web / WebGPU
+```
+
+### The lever that makes free CPU viable: shrink the model
+
+Free hosting almost always means **CPU**. The 5-model fp32 + TTA ensemble (20 forward
+passes) is too slow there. Convert to **ONNX** and pick a point on this curve:
+
+| Config | ~Latency on 2–4 CPU cores | F2 vs full ensemble |
+|---|---|---|
+| Full 5-model + TTA ×4 (20 passes) | ~3–8 s | baseline (0.905) |
+| 2–3 models, no TTA | ~1–3 s | small drop |
+| **Single B4 (seed42), int8, no TTA** | **~0.2–0.8 s** | modest drop (single val-F2 0.92) |
+
+Single int8 model is the sweet spot for a free demo: sub-second, fits any free tier,
+Grad-CAM still works. Keep the full ensemble for a later paid/GPU tier.
+
+### Ranked free options for THIS project
+
+**1. Oracle Cloud Always Free A1 VM — best "free + always-on + decent latency".** ⭐
+- 4 ARM cores, 24 GB RAM, **never expires** (not a trial/credit). Run a persistent
+  `FastAPI + onnxruntime` server → **no cold start**, consistent latency.
+- 24 GB RAM holds all 5 ONNX models comfortably; run single-model sub-second or a
+  reduced ensemble in 1–3 s. Grad-CAM works.
+- Put **Cloudflare Tunnel (free)** or **Caddy (auto-HTTPS)** in front → free TLS, hides
+  the VM IP, gives a stable hostname for the Vercel `/api/predict` route to call.
+- Cons: most setup/ops of the free options; A1 capacity is frequently "out of capacity"
+  in single-AD regions (mitigate: pick a 3-AD region e.g. Ashburn/London, or flip to
+  PAYG with a card — keeps the always-free resources, just guarantees provisioning).
+
+**2. Hugging Face Space (free CPU Basic) — best zero-ops free option.**
+- 2 vCPU / 16 GB, public HTTPS endpoint out of the box, `git push` to deploy. Wrap the
+  `melanoma` package in FastAPI (Docker Space) or Gradio (exposes a REST API too).
+- Cons: only 2 vCPU (slower → lean toward single int8 model); **free Spaces sleep when
+  idle → ~30–60 s cold start** on the first hit after inactivity (UX: "warming up").
+- ZeroGPU is *not* a fit for a backend API here: ~3.5 min/day free quota + Gradio-only.
+
+**3. Modal ($30/mo free credits) — best free-ish GPU latency, bursty traffic.**
+- True scale-to-zero GPU, sub-second-ish cold starts, runs the **full ensemble fast**.
+  $30/mo covers a lot at demo volume (A10G ≈ $1.10/hr, billed per-ms of actual run) →
+  effectively free for low traffic. Lifts the existing Python code with minimal change.
+- Cons: it's credits, not free-forever; needs a card; cost grows if traffic does.
+
+**4. In-browser ONNX / WebGPU — only genuinely $0, no-account, no-cold-start, ∞ scale.**
+- Vercel serves a static ONNX model; inference runs on the user's device. **Image never
+  leaves the device** (privacy win). WebGPU is fast on modern phones/laptops; WASM
+  fallback is slower. Single model; Grad-CAM is hard client-side.
+
+**Also-ran:** Google Cloud Run free tier (CPU, scale-to-zero, generous free request
+allowance) — viable for an ONNX server, but scale-to-zero means cold starts, so Oracle's
+always-on A1 is strictly better for "decent runtime" at the same $0.
+
+### Recommended free architecture
+
+```
+[ Browser ]  --->  [ Vercel: Next.js UI + /api/predict proxy ]  --->  [ free model host ]
+ camera / upload     validate · rate-limit · forward image            Oracle A1 VM:
+                     return {prob,label,0.29,gradcam}                  FastAPI + onnxruntime
+                                                                       (single int8 B4, no cold start)
+                                                                       behind Cloudflare Tunnel (HTTPS)
+```
+
+- **Primary:** Oracle A1 + FastAPI + single int8 ONNX model, fronted by Cloudflare Tunnel.
+  $0 forever, no cold start, sub-second, Grad-CAM intact.
+- **If you want zero server ops instead:** HF CPU Space (accept idle cold starts).
+- **If you later want the full-ensemble fidelity:** swap the proxy target to Modal — UI
+  and `/api/predict` contract stay identical.
+
 ## 9. Open questions for the user
 
 1. **Privacy vs fidelity:** is "image never leaves device" (Option C, single model) more
