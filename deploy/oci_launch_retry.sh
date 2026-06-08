@@ -27,7 +27,8 @@ MEM_GB="${MEM_GB:-6}"
 
 DISPLAY_NAME="${DISPLAY_NAME:-mela-a1}"
 SHAPE="VM.Standard.A1.Flex"
-SLEEP="${SLEEP:-60}"          # seconds between attempts
+SLEEP="${SLEEP:-60}"          # seconds between attempts (loop mode)
+ONCE="${ONCE:-0}"            # 1 = single attempt then exit (for GitHub Actions cron)
 
 # Optional overrides — auto-discovered if left blank:
 AD_NAME="${AD_NAME:-}"
@@ -52,7 +53,8 @@ existing=$(oci compute instance list --compartment-id "$COMPARTMENT_ID" \
   --query "data[?\"display-name\"=='$DISPLAY_NAME' && \"lifecycle-state\"!='TERMINATED']|[0].id" \
   --raw-output 2>/dev/null || true)
 if [ -n "${existing:-}" ] && [ "$existing" != "null" ]; then
-  die "An instance named '$DISPLAY_NAME' already exists ($existing). Aborting to avoid duplicates."
+  echo "Instance '$DISPLAY_NAME' already exists ($existing). Nothing to do."
+  exit 0   # clean exit so scheduled (cron) reruns stay green
 fi
 
 # Auto-discover availability domain (single-AD region -> the only one).
@@ -90,13 +92,11 @@ echo "  shape       : $SHAPE  ($OCPUS OCPU / ${MEM_GB} GB)"
 echo "  ssh pub key : $SSH_PUB"
 echo "  retry every : ${SLEEP}s"
 echo "  name        : $DISPLAY_NAME"
+echo "  mode        : $([ "$ONCE" = 1 ] && echo 'single attempt' || echo 'loop (keep tab open)')"
 echo "====================="
-echo "Keep this Cloud Shell tab OPEN. Ctrl-C to stop."
 
-attempt=0
-while true; do
-  attempt=$((attempt + 1))
-  echo "[$(date '+%H:%M:%S')] attempt #$attempt ..."
+# Returns: 0 success, 2 out-of-capacity, 1 other error.
+try_launch() {
   out=$(oci compute instance launch \
     --availability-domain "$AD_NAME" \
     --compartment-id "$COMPARTMENT_ID" \
@@ -107,24 +107,42 @@ while true; do
     --assign-public-ip true \
     --display-name "$DISPLAY_NAME" \
     --ssh-authorized-keys-file "$SSH_PUB" 2>&1)
-  rc=$?
-
-  if [ $rc -eq 0 ]; then
+  if [ $? -eq 0 ]; then
     echo "============================================================"
     echo "SUCCESS — instance is provisioning!"
     echo "$out" | grep -iE '"id"|"display-name"|"lifecycle-state"' | head -5
     echo "Get its public IP once RUNNING:"
     echo "  oci compute instance list-vnics --instance-id <INSTANCE_OCID> --query 'data[0].\"public-ip\"' --raw-output"
     echo "============================================================"
-    break
+    return 0
   fi
-
   if echo "$out" | grep -qiE 'out of (host )?capacity|capacity|TooManyRequests|429|500'; then
-    echo "  out of capacity — retrying in ${SLEEP}s"
-  else
-    echo "  NON-capacity error — stopping so you can read it:"
-    echo "$out"
-    exit 1
+    return 2
   fi
+  echo "  NON-capacity error:"; echo "$out"
+  return 1
+}
+
+if [ "$ONCE" = 1 ]; then
+  echo "[$(date '+%H:%M:%S')] single attempt ..."
+  try_launch; rc=$?
+  case $rc in
+    0) exit 0 ;;
+    2) echo "  out of capacity — will try again next scheduled run."; exit 0 ;;  # green run
+    *) exit 1 ;;                                                                 # real failure
+  esac
+fi
+
+echo "Keep this Cloud Shell tab OPEN. Ctrl-C to stop."
+attempt=0
+while true; do
+  attempt=$((attempt + 1))
+  echo "[$(date '+%H:%M:%S')] attempt #$attempt ..."
+  try_launch; rc=$?
+  case $rc in
+    0) break ;;
+    2) echo "  out of capacity — retrying in ${SLEEP}s" ;;
+    *) exit 1 ;;
+  esac
   sleep "$SLEEP"
 done

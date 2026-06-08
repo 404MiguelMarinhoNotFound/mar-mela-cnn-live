@@ -1,0 +1,61 @@
+name: OCI A1 capacity retry
+
+# Unattended hunt for VM.Standard.A1.Flex capacity. Runs every ~10 minutes
+# and attempts one launch. Stops being a no-op once the instance exists
+# (the script's duplicate-guard exits cleanly). Trigger manually too.
+#
+# Requires these repo secrets (Settings -> Secrets and variables -> Actions):
+#   OCI_CLI_USER         your user OCID        (ocid1.user...)
+#   OCI_CLI_TENANCY      your tenancy OCID     (ocid1.tenancy...)  also used as compartment
+#   OCI_CLI_FINGERPRINT  API key fingerprint
+#   OCI_CLI_REGION       e.g. eu-paris-1
+#   OCI_CLI_KEY_CONTENT  the API private key PEM (full contents)
+#   SSH_PUBLIC_KEY       public key to install on the instance (KEEP its private half!)
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'   # best-effort; GitHub may delay under load
+  workflow_dispatch:
+
+# Don't pile up overlapping runs.
+concurrency:
+  group: oci-a1-retry
+  cancel-in-progress: false
+
+jobs:
+  launch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OCI CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh \
+            | bash -s -- --accept-all-defaults
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Configure OCI auth
+        run: |
+          mkdir -p ~/.oci
+          umask 077
+          cat > ~/.oci/config <<EOF
+          [DEFAULT]
+          user=${{ secrets.OCI_CLI_USER }}
+          tenancy=${{ secrets.OCI_CLI_TENANCY }}
+          fingerprint=${{ secrets.OCI_CLI_FINGERPRINT }}
+          region=${{ secrets.OCI_CLI_REGION }}
+          key_file=$HOME/.oci/key.pem
+          EOF
+          printf '%s\n' "${{ secrets.OCI_CLI_KEY_CONTENT }}" > ~/.oci/key.pem
+          printf '%s\n' "${{ secrets.SSH_PUBLIC_KEY }}"      > ~/.oci/instance.pub
+          chmod 600 ~/.oci/config ~/.oci/key.pem
+
+      - name: Attempt launch (single)
+        env:
+          COMPARTMENT_ID: ${{ secrets.OCI_CLI_TENANCY }}
+          SSH_PUB: /home/runner/.oci/instance.pub
+          ONCE: '1'
+          OCPUS: '1'
+          MEM_GB: '6'
+          DISPLAY_NAME: mela-a1
+        run: ./deploy/oci_launch_retry.sh
