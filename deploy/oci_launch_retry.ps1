@@ -29,7 +29,10 @@ param(
   [string]$SshPub = "$env:USERPROFILE\.ssh\id_rsa.pub"
 )
 
-$ErrorActionPreference = "Stop"
+# NOTE: keep this 'Continue', not 'Stop'. The OCI CLI writes its ServiceError
+# (incl. the expected "Out of host capacity") to stderr; under 'Stop' PowerShell
+# turns that into a terminating NativeCommandError and kills the retry loop.
+$ErrorActionPreference = "Continue"
 function Die($m){ Write-Host "ERROR: $m" -ForegroundColor Red; exit 1 }
 
 if (-not $CompartmentId) { Die "Set -CompartmentId or `$env:COMPARTMENT_ID to your tenancy/root OCID." }
@@ -102,7 +105,7 @@ Write-Host "  name        : $DisplayName"
 Write-Host "====================="
 
 function Try-Launch {
-  $out = & oci compute instance launch `
+  $out = (& oci compute instance launch `
     --availability-domain $AdName `
     --compartment-id $CompartmentId `
     --shape "VM.Standard.A1.Flex" `
@@ -111,8 +114,9 @@ function Try-Launch {
     --subnet-id $SubnetId `
     --assign-public-ip true `
     --display-name $DisplayName `
-    --ssh-authorized-keys-file $SshPub 2>&1 | Out-String
-  if ($LASTEXITCODE -eq 0) {
+    --ssh-authorized-keys-file $SshPub 2>&1 | Out-String)
+  $code = $LASTEXITCODE
+  if ($code -eq 0) {
     Write-Host "============================================================" -ForegroundColor Green
     Write-Host "SUCCESS - instance is provisioning!" -ForegroundColor Green
     Write-Host $out
@@ -121,7 +125,11 @@ function Try-Launch {
     Write-Host "============================================================" -ForegroundColor Green
     return 0
   }
-  if ($out -match '(?i)out of (host )?capacity|capacity|TooManyRequests|429|500') { return 2 }
+  if ($out -match '(?i)out of (host )?capacity|capacity|TooManyRequests|429|500|InternalError') {
+    $msg = ($out | Select-String -Pattern '"(code|message)":\s*"[^"]*"' -AllMatches).Matches.Value -join '  '
+    if ($msg) { Write-Host "  ($msg)" -ForegroundColor DarkGray }
+    return 2
+  }
   Write-Host "NON-capacity error:" -ForegroundColor Yellow; Write-Host $out
   return 1
 }
