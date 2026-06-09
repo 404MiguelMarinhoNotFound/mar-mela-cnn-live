@@ -21,7 +21,7 @@ param(
   [int]$Ocpus = 1,
   [int]$MemGb = 6,
   [string]$DisplayName = "mela-a1",
-  [int]$SleepSec = 60,
+  [int]$SleepSec = 120,
   [switch]$Once,
   [string]$AdName = "",
   [string]$SubnetId = "",
@@ -125,13 +125,16 @@ function Try-Launch {
     Write-Host "============================================================" -ForegroundColor Green
     return 0
   }
-  if ($out -match '(?i)out of (host )?capacity|capacity|TooManyRequests|429|500|InternalError') {
-    $msg = ($out | Select-String -Pattern '"(code|message)":\s*"[^"]*"' -AllMatches).Matches.Value -join '  '
-    if ($msg) { Write-Host "  ($msg)" -ForegroundColor DarkGray }
-    return 2
+  # FATAL — config/quota problems that retrying will never fix: stop and show.
+  if ($out -match '(?i)NotAuthenticated|NotAuthorized|LimitExceeded|QuotaExceeded|CannotParseRequest|InvalidParameter|MissingParameter|InvalidImage|shape.*not (valid|compatible)') {
+    Write-Host "FATAL error - stopping:" -ForegroundColor Red; Write-Host $out
+    return 1
   }
-  Write-Host "NON-capacity error:" -ForegroundColor Yellow; Write-Host $out
-  return 1
+  # Everything else (out of capacity, TooManyRequests, timeouts, 5xx) — retry.
+  $msg = ($out | Select-String -Pattern '"(code|message)":\s*"[^"]*"' -AllMatches).Matches.Value -join '  '
+  if ($msg) { Write-Host "  ($msg)" -ForegroundColor DarkGray }
+  else      { Write-Host "  (transient error - retrying)" -ForegroundColor DarkGray }
+  return 2
 }
 
 if ($Once) {
